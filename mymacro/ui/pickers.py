@@ -2,13 +2,26 @@
 
 RegionPicker  - freezes the screen, drag a rectangle, get [left, top, w, h]
 CoordPicker   - park the mouse on the target, press F2, get (x, y)
+
+Both are QDialogs driven by `exec()`. That matters: they are opened from
+inside another dialog that is itself running `exec()`, and Qt only lets the
+innermost modal dialog receive input. A plain QWidget overlay would be shown
+but silently refuse every click.
+
+Hiding the calling dialog to get it out of the screenshot is not an option
+either. `QDialog::setVisible(false)` exits the modal event loop, so `exec()`
+would return Rejected the moment the overlay opened and the edit would be
+thrown away. `invisible_while()` sets the window opacity to zero instead,
+which keeps the loop alive and still keeps the window out of the capture.
 """
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+
 import cv2
 import numpy as np
-from PySide6.QtCore import QPoint, QRect, Qt, QTimer, Signal
+from PySide6.QtCore import QEventLoop, QPoint, QRect, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QDialog,
@@ -19,27 +32,55 @@ from PySide6.QtWidgets import (
 )
 
 from .. import vision
-from ..input_backend import position as cursor_position
 from ..hotkeys import SingleKeyCapture
+from ..input_backend import position as cursor_position
+
+# Long enough for the compositor to apply the opacity change before the
+# screenshot is taken.
+HIDE_SETTLE_MS = 250
 
 
-class RegionPicker(QWidget):
+def pump_events(milliseconds: int) -> None:
+    """Keep the UI responsive for a while without blocking the event loop."""
+    loop = QEventLoop()
+    QTimer.singleShot(milliseconds, loop.quit)
+    loop.exec()
+
+
+@contextmanager
+def invisible_while(widgets: list[QWidget]):
+    """Make windows invisible to a screen capture without hiding them.
+
+    Hiding is what we actually want, but it cancels any `exec()` these windows
+    are running, and hiding a parent hides its dialogs too.
+    """
+    saved = [(widget, widget.windowOpacity()) for widget in widgets]
+    for widget, _ in saved:
+        widget.setWindowOpacity(0.0)
+    pump_events(HIDE_SETTLE_MS)
+    try:
+        yield
+    finally:
+        for widget, opacity in saved:
+            widget.setWindowOpacity(opacity)
+
+
+class RegionPicker(QDialog):
     """Full-virtual-desktop overlay showing a frozen screenshot.
 
-    Drag to select. Esc cancels. The selection is returned in absolute screen
-    coordinates, which is what both mss and SendInput use.
+    Drag to select, Esc cancels. The selection comes back in absolute screen
+    coordinates, which is what both mss and SetCursorPos use.
     """
 
-    selected = Signal(object)  # list[int] | None
-
-    def __init__(self) -> None:
-        super().__init__(None)
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
         self.setWindowFlags(
-            Qt.WindowType.FramelessWindowHint
-            | Qt.WindowType.WindowStaysOnTopHint
-            | Qt.WindowType.Tool
+            Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint
         )
         self.setCursor(Qt.CursorShape.CrossCursor)
+        self.setSizeGripEnabled(False)
+
+        self.region: list[int] | None = None
 
         box = vision.virtual_screen()
         self._origin = (box["left"], box["top"])
@@ -55,6 +96,11 @@ class RegionPicker(QWidget):
         self._start: QPoint | None = None
         self._end: QPoint | None = None
 
+    def pick(self) -> list[int] | None:
+        """Show the overlay and return the chosen region, or None."""
+        self.exec()
+        return self.region
+
     # --- painting ---------------------------------------------------------
     def paintEvent(self, event) -> None:  # noqa: N802 (Qt naming)
         painter = QPainter(self)
@@ -64,12 +110,13 @@ class RegionPicker(QWidget):
         rect = self._current_rect()
         if rect is not None and rect.width() > 0 and rect.height() > 0:
             painter.drawPixmap(rect, self._pixmap, rect)
-            pen = QPen(QColor(60, 160, 255), 2)
-            painter.setPen(pen)
+            painter.setPen(QPen(QColor(60, 160, 255), 2))
             painter.drawRect(rect)
-            label = f"{rect.width()} x {rect.height()}"
             painter.setPen(QPen(QColor(255, 255, 255)))
-            painter.drawText(rect.left() + 4, max(14, rect.top() - 6), label)
+            painter.drawText(
+                rect.left() + 4, max(14, rect.top() - 6),
+                f"{rect.width()} x {rect.height()}",
+            )
         else:
             painter.setPen(QPen(QColor(255, 255, 255)))
             painter.drawText(
@@ -99,23 +146,16 @@ class RegionPicker(QWidget):
         if event.button() != Qt.MouseButton.LeftButton:
             return
         rect = self._current_rect()
-        self.close()
         if rect is None or rect.width() < 3 or rect.height() < 3:
-            self.selected.emit(None)
+            self.reject()
             return
-        self.selected.emit(
-            [
-                rect.left() + self._origin[0],
-                rect.top() + self._origin[1],
-                rect.width(),
-                rect.height(),
-            ]
-        )
-
-    def keyPressEvent(self, event) -> None:  # noqa: N802
-        if event.key() == Qt.Key.Key_Escape:
-            self.close()
-            self.selected.emit(None)
+        self.region = [
+            rect.left() + self._origin[0],
+            rect.top() + self._origin[1],
+            rect.width(),
+            rect.height(),
+        ]
+        self.accept()
 
 
 class CoordPicker(QDialog):
@@ -169,8 +209,7 @@ class CoordPicker(QDialog):
         self._position_label.setText(f"현재 좌표: ({int(x)}, {int(y)})")
 
     def _on_captured(self) -> None:
-        x, y = cursor_position()
-        self.result_point = (int(x), int(y))
+        self.result_point = cursor_position()
         self.accept()
 
     def done(self, code: int) -> None:  # noqa: D102

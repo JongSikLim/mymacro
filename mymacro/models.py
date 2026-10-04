@@ -107,9 +107,13 @@ class Step:
         if self.type == IF_IMAGE:
             name = Path(str(p.get("image", ""))).name or "(이미지 없음)"
             conf = float(p.get("confidence", 0.85))
+            notes = [f"정확도 {conf:.2f}"]
             timeout = int(p.get("timeout_ms", 0))
-            tail = f", 최대 {timeout}ms 대기" if timeout else ""
-            return f"이미지 조건: {name} (정확도 {conf:.2f}{tail})"
+            if timeout:
+                notes.append(f"최대 {timeout}ms 대기")
+            if p.get("click_on_match"):
+                notes.append("찾으면 클릭")
+            return f"이미지 조건: {name} ({', '.join(notes)})"
         if self.type == LOOP:
             return _describe_loop(p)
         if self.type == LABEL:

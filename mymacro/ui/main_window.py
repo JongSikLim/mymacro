@@ -31,7 +31,7 @@ from ..models import Macro, Step
 from ..paths import IMAGE_DIR, MACRO_DIR, ensure_dirs
 from ..player import Player
 from ..recorder import Recorder
-from .step_dialogs import edit_step
+from .step_dialogs import build_image_watch, edit_step
 
 HOTKEY_RECORD = "<f8>"
 HOTKEY_RUN = "<f9>"
@@ -165,6 +165,7 @@ class MainWindow(QMainWindow):
             ("키보드 추가", lambda: self._add_step(models.KEY)),
             ("딜레이 추가", lambda: self._add_step(models.DELAY)),
             (None, None),
+            ("이미지 감시 추가", self._add_image_watch),
             ("이미지 조건 추가", lambda: self._add_step(models.IF_IMAGE)),
             ("반복 블록 추가", lambda: self._add_step(models.LOOP)),
             ("라벨 추가", lambda: self._add_step(models.LABEL)),
@@ -303,6 +304,25 @@ class MainWindow(QMainWindow):
         container.insert(insert_at, step)
         self._refresh_tree()
         self._log(f"단계 추가: {step.describe()}")
+
+    def _add_image_watch(self) -> None:
+        """Insert a ready-made "check every N seconds and click" block."""
+        container, insert_at, depth = self._target_container()
+        if depth >= MAX_DEPTH:
+            QMessageBox.information(
+                self, "중첩 제한",
+                f"블록은 {MAX_DEPTH}단계까지만 겹칠 수 있습니다.\n"
+                "더 바깥 목록을 선택한 뒤 추가하세요.",
+            )
+            return
+
+        steps = build_image_watch(self, IMAGE_DIR)
+        if not steps:
+            return
+        for offset, step in enumerate(steps):
+            container.insert(insert_at + offset, step)
+        self._refresh_tree()
+        self._log(f"이미지 감시 추가: {steps[0].describe()}")
 
     def _edit_selected(self) -> None:
         node = self._selected_node()

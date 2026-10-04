@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QTimer, Qt
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
 from .. import keymap, models, vision
 from ..models import Macro, Step
 from ..paths import IMAGE_DIR
-from .pickers import CoordPicker, RegionPicker
+from .pickers import CoordPicker, RegionPicker, invisible_while
 
 MAX_COORD = 100000
 MIN_COORD = -100000
@@ -155,33 +155,23 @@ class TemplatePicker(QWidget):
         self.region_label.setText(self._region_text())
 
     def _run_region_picker(self, handler) -> None:
-        """Hide our windows, then show the frozen full-screen overlay."""
+        """Take our windows out of the shot, then show the frozen overlay.
+
+        The windows are made transparent rather than hidden. Hiding a dialog
+        cancels the `exec()` it is running, which used to throw the whole edit
+        away the moment the capture button was pressed.
+        """
         dialog = self.window()
-        parent_window = dialog.parent().window() if dialog.parent() is not None else None
-        dialog.hide()
-        if parent_window is not None:
-            parent_window.hide()
+        windows = [dialog]
+        if dialog.parent() is not None:
+            windows.append(dialog.parent().window())
 
-        def show_overlay() -> None:
-            picker = RegionPicker()
-            self._picker = picker  # keep a reference alive while it is open
+        with invisible_while(windows):
+            region = RegionPicker().pick()
 
-            def finished(region) -> None:
-                if parent_window is not None:
-                    parent_window.show()
-                dialog.show()
-                dialog.raise_()
-                dialog.activateWindow()
-                handler(region)
-
-            picker.selected.connect(finished)
-            picker.show()
-            picker.raise_()
-            picker.activateWindow()
-
-        # Give the window manager time to actually hide the windows, otherwise
-        # they end up inside the screenshot.
-        QTimer.singleShot(300, show_overlay)
+        dialog.raise_()
+        dialog.activateWindow()
+        handler(region)
 
     def _on_template_captured(self, region) -> None:
         if not region:
@@ -585,6 +575,105 @@ class LoopStepDialog(_BaseStepDialog):
         return params
 
 
+class ImageWatchDialog(_BaseStepDialog):
+    """Build the "watch for an image and click it" block in one go.
+
+    This is the most common thing people want: sit in a loop, check the screen
+    every few seconds, and click the thing when it shows up. Assembling it by
+    hand means a loop, an image condition and a delay, so this dialog writes
+    those three steps for you. They are ordinary steps afterwards - open them
+    and change anything.
+    """
+
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        images_dir: Path | None = None,
+        **_: Any,
+    ) -> None:
+        super().__init__(parent, "이미지 감시 추가")
+        self.setMinimumWidth(560)
+
+        self.form.addRow(
+            QLabel(
+                "화면을 일정 간격으로 확인해서, 지정한 이미지가 보이면 클릭합니다.\n"
+                "반복 블록 + 이미지 조건 + 딜레이 세 단계로 만들어집니다."
+            )
+        )
+
+        self.template = TemplatePicker(self, images_dir)
+        self.template.set_params({})
+        self.form.addRow(self.template)
+
+        self.interval = QDoubleSpinBox()
+        self.interval.setRange(0.1, 3600.0)
+        self.interval.setSingleStep(0.5)
+        self.interval.setDecimals(1)
+        self.interval.setValue(1.0)
+        self.interval.setSuffix(" 초")
+        self.interval.setToolTip("한 번 확인한 뒤 다음 확인까지 기다리는 시간입니다.")
+        self.form.addRow("확인 주기", self.interval)
+
+        self.click_on_match = QCheckBox("보이면 그 위치를 클릭")
+        self.click_on_match.setChecked(True)
+        self.form.addRow("", self.click_on_match)
+
+        self.offset_x = QSpinBox()
+        self.offset_x.setRange(-5000, 5000)
+        self.offset_y = QSpinBox()
+        self.offset_y.setRange(-5000, 5000)
+        offset_row = QHBoxLayout()
+        offset_row.addWidget(QLabel("X"))
+        offset_row.addWidget(self.offset_x)
+        offset_row.addWidget(QLabel("Y"))
+        offset_row.addWidget(self.offset_y)
+        offset_holder = QWidget()
+        offset_holder.setLayout(offset_row)
+        offset_holder.setToolTip("찾은 이미지 중앙에서 이만큼 떨어진 곳을 클릭합니다.")
+        self.form.addRow("클릭 보정", offset_holder)
+
+        self.after_match = QComboBox()
+        self.after_match.addItem("계속 감시한다", "continue")
+        self.after_match.addItem("감시를 끝낸다", "stop")
+        self.form.addRow("클릭한 뒤", self.after_match)
+
+        self.max_checks = QSpinBox()
+        self.max_checks.setRange(1, 1000000)
+        self.max_checks.setValue(1000)
+        self.max_checks.setToolTip("이 횟수만큼 확인하면 감시를 끝냅니다. 안전장치입니다.")
+        self.form.addRow("최대 확인 횟수", self.max_checks)
+
+    def to_params(self) -> dict[str, Any]:
+        # Not a step type; the caller uses to_steps() instead.
+        return {}
+
+    def to_steps(self) -> list[Step]:
+        template = self.template.to_params()
+
+        condition = models.if_image_step(
+            template["image"],
+            confidence=template["confidence"],
+            region=template["region"],
+            grayscale=template["grayscale"],
+            use_cache=template["use_cache"],
+            timeout_ms=0,          # one look per turn; the delay sets the pace
+            click_on_match=self.click_on_match.isChecked(),
+            match_offset=[self.offset_x.value(), self.offset_y.value()],
+        )
+        if self.after_match.currentData() == "stop":
+            condition.then_steps = [models.jump_step("break")]
+
+        block = models.loop_step(
+            "forever",
+            max_iterations=self.max_checks.value(),
+        )
+        block.children = [
+            condition,
+            models.delay_step(int(round(self.interval.value() * 1000))),
+        ]
+        return [block]
+
+
 class LabelStepDialog(_BaseStepDialog):
     """A named position that a jump step can return to."""
 
@@ -682,6 +771,17 @@ DIALOGS = {
     models.LABEL: LabelStepDialog,
     models.JUMP: JumpStepDialog,
 }
+
+
+def build_image_watch(
+    parent: QWidget | None,
+    images_dir: Path | None = None,
+) -> list[Step] | None:
+    """Ask for the watch settings and return the steps, or None if cancelled."""
+    dialog = ImageWatchDialog(parent, images_dir=images_dir)
+    if dialog.exec() == QDialog.DialogCode.Accepted:
+        return dialog.to_steps()
+    return None
 
 
 def edit_step(
