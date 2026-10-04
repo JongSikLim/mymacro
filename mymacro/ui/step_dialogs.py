@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import keymap, models, vision
+from .. import windows as win
 from ..models import Macro, Step
 from ..paths import IMAGE_DIR
 from .pickers import CoordPicker, RegionPicker, invisible_while
@@ -819,6 +820,139 @@ def _set_row_visible(form: QFormLayout, widget: QWidget, visible: bool) -> None:
         label.setVisible(visible)
 
 
+class RandomStepDialog(_BaseStepDialog):
+    """A block that runs exactly one of its options, picked at random.
+
+    Only the number of options is set here; what goes in each one is edited in
+    the step list, like any other block.
+    """
+
+    def __init__(self, parent: QWidget | None = None, step: Step | None = None, **_: Any) -> None:
+        super().__init__(parent, "랜덤 선택")
+        existing = len(step.children) if step is not None else 2
+
+        self.count = QSpinBox()
+        self.count.setRange(2, 10)
+        self.count.setValue(max(2, existing))
+        self.form.addRow("선택지 개수", self.count)
+        self.form.addRow(
+            "",
+            QLabel(
+                "실행할 때마다 선택지 중 하나를 같은 확률로 골라 그 안의 단계만 실행합니다.\n"
+                "각 선택지의 내용은 목록에서 '선택지 N' 을 고른 뒤 단계를 추가하세요.\n"
+                "개수를 줄이면 뒤쪽 선택지부터 지워집니다."
+            ),
+        )
+
+    def to_params(self) -> dict[str, Any]:
+        # The caller syncs the child options to match this count.
+        return {"count": self.count.value()}
+
+
+class WindowStepDialog(_BaseStepDialog):
+    """Pick the application the macro should be typing into.
+
+    Input goes wherever the focus is, so targeting an application means
+    bringing its window to the front first.
+    """
+
+    def __init__(self, parent: QWidget | None = None, step: Step | None = None, **_: Any) -> None:
+        super().__init__(parent, "창 선택")
+        self.setMinimumWidth(560)
+        p = dict(step.params) if step else {}
+
+        self.action = QComboBox()
+        self.action.addItem("창을 앞으로 가져와 활성화", "activate")
+        self.action.addItem("창이 나타날 때까지 기다리기만", "wait")
+        self.action.setCurrentIndex(max(0, self.action.findData(p.get("action", "activate"))))
+        self.form.addRow("동작", self.action)
+
+        self.open_windows = QComboBox()
+        refresh = QPushButton("새로 고침")
+        refresh.clicked.connect(self._reload_windows)
+        picker_row = QHBoxLayout()
+        picker_row.addWidget(self.open_windows, 1)
+        picker_row.addWidget(refresh)
+        picker_holder = QWidget()
+        picker_holder.setLayout(picker_row)
+        self.form.addRow("열려 있는 창", picker_holder)
+        self.open_windows.currentIndexChanged.connect(self._fill_from_selection)
+
+        self.title = QLineEdit(str(p.get("title", "")))
+        self.title.setPlaceholderText("제목에 이 글자가 들어가면 일치 (비우면 조건 없음)")
+        self.form.addRow("창 제목 포함", self.title)
+
+        self.process = QLineEdit(str(p.get("process", "")))
+        self.process.setPlaceholderText("예: notepad.exe (비우면 조건 없음)")
+        self.form.addRow("프로세스 이름", self.process)
+
+        self.timeout = QSpinBox()
+        self.timeout.setRange(0, 600000)
+        self.timeout.setSingleStep(500)
+        self.timeout.setSuffix(" ms")
+        self.timeout.setValue(int(p.get("timeout_ms", 5000)))
+        self.timeout.setToolTip("창이 아직 없으면 이 시간만큼 기다립니다.")
+        self.form.addRow("최대 대기", self.timeout)
+
+        self._hint = QLabel()
+        self._hint.setWordWrap(True)
+        self.form.addRow("", self._hint)
+
+        test = QPushButton("지금 이 조건에 맞는 창 찾아보기")
+        test.clicked.connect(self._test_match)
+        self.add_widget(test)
+
+        self._reload_windows()
+
+    def _reload_windows(self) -> None:
+        self.open_windows.blockSignals(True)
+        self.open_windows.clear()
+        self.open_windows.addItem("(직접 입력)", None)
+        for window in win.list_windows():
+            self.open_windows.addItem(window.label(), window)
+        self.open_windows.blockSignals(False)
+
+        if self.open_windows.count() == 1:
+            self._hint.setText(
+                "열려 있는 창을 읽지 못했습니다. 이 기능은 Windows에서만 동작합니다.\n"
+                "제목이나 프로세스 이름을 직접 입력해도 됩니다."
+                if not win.IS_WINDOWS
+                else "창 목록이 비어 있습니다. 대상 프로그램을 띄운 뒤 새로 고침하세요."
+            )
+        else:
+            self._hint.setText("목록에서 고르면 아래 칸이 채워집니다. 직접 고쳐도 됩니다.")
+
+    def _fill_from_selection(self) -> None:
+        window = self.open_windows.currentData()
+        if window is None:
+            return
+        self.title.setText(window.title)
+        self.process.setText(window.process)
+
+    def _test_match(self) -> None:
+        title = self.title.text().strip()
+        process = self.process.text().strip()
+        if not title and not process:
+            QMessageBox.warning(self, "확인", "창 제목이나 프로세스 이름 중 하나는 적어야 합니다.")
+            return
+        window = win.find(title, process)
+        if window is None:
+            QMessageBox.information(self, "결과", "지금 조건에 맞는 창이 없습니다.")
+        else:
+            QMessageBox.information(
+                self, "결과",
+                f"찾았습니다.\n제목: {window.title}\n프로세스: {window.process}",
+            )
+
+    def to_params(self) -> dict[str, Any]:
+        return {
+            "action": self.action.currentData(),
+            "title": self.title.text().strip(),
+            "process": self.process.text().strip(),
+            "timeout_ms": self.timeout.value(),
+        }
+
+
 DIALOGS = {
     models.MOUSE: MouseStepDialog,
     models.KEY: KeyStepDialog,
@@ -827,6 +961,8 @@ DIALOGS = {
     models.LOOP: LoopStepDialog,
     models.LABEL: LabelStepDialog,
     models.JUMP: JumpStepDialog,
+    models.RANDOM: RandomStepDialog,
+    models.WINDOW: WindowStepDialog,
 }
 
 

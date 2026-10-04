@@ -15,7 +15,8 @@ pytest.importorskip("PySide6")
 
 from mymacro import hotkeys, models  # noqa: E402
 from mymacro.models import (  # noqa: E402
-    Macro, delay_step, if_image_step, jump_step, key_step, label_step, loop_step, mouse_step,
+    Macro, delay_step, if_image_step, jump_step, key_step, label_step, loop_step,
+    mouse_step, random_step, window_step,
 )
 
 
@@ -87,7 +88,7 @@ def test_missing_goto_target_is_reported(window):
     assert window._missing_labels() == {"없음"}
 
 
-@pytest.mark.parametrize("step_type", models.STEP_TYPES)
+@pytest.mark.parametrize("step_type", models.USER_STEP_TYPES)
 def test_every_dialog_builds_and_returns_params(window, step_type):
     from mymacro.ui import step_dialogs
 
@@ -108,10 +109,12 @@ EXISTING_STEPS = {
     models.LOOP: loop_step("while_image", image="b.png"),
     models.LABEL: label_step("시작"),
     models.JUMP: jump_step("goto", "시작"),
+    models.RANDOM: random_step(3),
+    models.WINDOW: window_step("activate", title="메모장"),
 }
 
 
-@pytest.mark.parametrize("step_type", models.STEP_TYPES)
+@pytest.mark.parametrize("step_type", models.USER_STEP_TYPES)
 def test_every_dialog_round_trips_an_existing_step(window, step_type):
     from mymacro.ui import step_dialogs
 

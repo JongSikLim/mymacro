@@ -21,6 +21,7 @@ from typing import Callable, Iterable, Sequence
 
 from . import input_backend as ib
 from . import models, vision
+from . import windows as win
 from .models import Macro, Step
 
 # Dragging the pointer into the very top-left corner aborts the run. It is the
@@ -212,6 +213,10 @@ class Player:
                 self._do_loop(step)
             elif step.type == models.JUMP:
                 self._do_jump(step.params)
+            elif step.type == models.RANDOM:
+                self._do_random(step)
+            elif step.type == models.WINDOW:
+                self._do_window(step.params)
             else:
                 self.log(f"  (알 수 없는 단계 무시: {step.type})")
 
@@ -401,6 +406,54 @@ class Player:
         if found:
             self.log("    이미지가 나타나 루프를 끝냅니다")
         return not found
+
+    def _do_random(self, step: Step) -> None:
+        """Run exactly one option, chosen with equal probability."""
+        options = [
+            (index, option)
+            for index, option in enumerate(step.children)
+            if option.enabled
+        ]
+        if not options:
+            self.log("    (선택지가 없어 건너뜁니다)")
+            return
+        index, option = random.choice(options)
+        self.log(f"    선택지 {index + 1}번 실행")
+        self._run_steps(option.children)
+
+    def _do_window(self, p: dict) -> None:
+        self._progress += 1
+        title = str(p.get("title", "") or "")
+        process = str(p.get("process", "") or "")
+        if not title and not process:
+            self.log("    (대상 창이 지정되지 않아 건너뜁니다)")
+            return
+
+        action = str(p.get("action", "activate"))
+        timeout_ms = int(p.get("timeout_ms", 5000) or 0)
+        deadline = time.monotonic() + timeout_ms / 1000.0
+
+        while True:
+            self._check_stop()
+            window = win.find(title, process)
+            if window is not None:
+                break
+            if time.monotonic() >= deadline:
+                self.log(f"    창을 찾지 못했습니다: {title or process}")
+                return
+            self._sleep_ms(200)
+
+        self.log(f"    찾음: {window.title!r} ({window.process})")
+        if action == "wait":
+            return
+
+        if win.activate(window.handle):
+            self.log("    활성화 완료")
+        else:
+            self.log(
+                "    활성화 실패: Windows가 포커스 변경을 거부했습니다. "
+                "대상이 관리자 권한으로 실행 중인지 확인하세요."
+            )
 
     def _do_jump(self, p: dict) -> None:
         action = str(p.get("action", "break"))

@@ -164,10 +164,12 @@ class MainWindow(QMainWindow):
             ("마우스 추가", lambda: self._add_step(models.MOUSE)),
             ("키보드 추가", lambda: self._add_step(models.KEY)),
             ("딜레이 추가", lambda: self._add_step(models.DELAY)),
+            ("창 선택 추가", lambda: self._add_step(models.WINDOW)),
             (None, None),
             ("이미지 감시 추가", self._add_image_watch),
             ("이미지 조건 추가", lambda: self._add_step(models.IF_IMAGE)),
             ("반복 블록 추가", lambda: self._add_step(models.LOOP)),
+            ("랜덤 선택 추가", lambda: self._add_step(models.RANDOM)),
             ("라벨 추가", lambda: self._add_step(models.LABEL)),
             ("흐름 제어 추가", lambda: self._add_step(models.JUMP)),
             (None, None),
@@ -301,6 +303,8 @@ class MainWindow(QMainWindow):
         if params is None:
             return
         step = Step(type=step_type, params=params)
+        if step_type == models.RANDOM:
+            models.sync_random_options(step)
         container.insert(insert_at, step)
         self._refresh_tree()
         self._log(f"단계 추가: {step.describe()}")
@@ -334,7 +338,20 @@ class MainWindow(QMainWindow):
         if params is None:
             return
         step.params = params
+        if step.type == models.RANDOM:
+            removed = self._options_losing_steps(step)
+            if removed and QMessageBox.question(
+                self, "선택지 삭제",
+                f"선택지 {removed}개 안의 단계도 함께 지워집니다. 계속할까요?",
+            ) != QMessageBox.StandardButton.Yes:
+                step.params["count"] = len(step.children)
+            models.sync_random_options(step)
         self._refresh_tree()
+
+    def _options_losing_steps(self, step: Step) -> int:
+        """How many non-empty options a shrink would throw away."""
+        wanted = max(2, int(step.params.get("count", len(step.children)) or 2))
+        return sum(1 for option in step.children[wanted:] if option.children)
 
     def _duplicate_selected(self) -> None:
         node = self._selected_node()

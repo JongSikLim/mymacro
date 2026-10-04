@@ -28,9 +28,18 @@ IF_IMAGE = "if_image"
 LOOP = "loop"
 LABEL = "label"
 JUMP = "jump"
+RANDOM = "random"
+OPTION = "option"
+WINDOW = "window"
 
-STEP_TYPES = (MOUSE, KEY, DELAY, IF_IMAGE, LOOP, LABEL, JUMP)
-CONTAINER_TYPES = (IF_IMAGE, LOOP)
+STEP_TYPES = (MOUSE, KEY, DELAY, IF_IMAGE, LOOP, LABEL, JUMP, RANDOM, OPTION, WINDOW)
+
+# Types the user adds directly. OPTION only ever exists inside a RANDOM block,
+# so it has no button and no editor of its own.
+USER_STEP_TYPES = (MOUSE, KEY, DELAY, WINDOW, IF_IMAGE, LOOP, RANDOM, LABEL, JUMP)
+
+CONTAINER_TYPES = (IF_IMAGE, LOOP, RANDOM)
+CHILD_TYPES = (LOOP, RANDOM, OPTION)
 
 MOUSE_ACTIONS = (
     "move", "click", "double_click", "right_click", "middle_click",
@@ -43,6 +52,7 @@ JUMP_ACTIONS = ("break", "continue", "restart", "stop", "goto")
 THEN_LABEL = "└ 찾았을 때"
 ELSE_LABEL = "└ 못 찾았을 때"
 BODY_LABEL = "└ 반복할 내용"
+OPTION_LABEL = "└ 이 선택지"
 
 
 @dataclass
@@ -64,7 +74,7 @@ class Step:
         if self.type == IF_IMAGE:
             data["then_steps"] = [s.to_dict() for s in self.then_steps]
             data["else_steps"] = [s.to_dict() for s in self.else_steps]
-        elif self.type == LOOP:
+        elif self.type in CHILD_TYPES:
             data["children"] = [s.to_dict() for s in self.children]
         return data
 
@@ -91,6 +101,13 @@ class Step:
             return [(THEN_LABEL, self.then_steps), (ELSE_LABEL, self.else_steps)]
         if self.type == LOOP:
             return [(BODY_LABEL, self.children)]
+        if self.type == RANDOM:
+            return [
+                (f"└ 선택지 {index + 1}", option.children)
+                for index, option in enumerate(self.children)
+            ]
+        if self.type == OPTION:
+            return [(OPTION_LABEL, self.children)]
         return []
 
     # --- display -------------------------------------------------------
@@ -123,6 +140,12 @@ class Step:
             return f"라벨: {p.get('name', '')}"
         if self.type == JUMP:
             return _describe_jump(p)
+        if self.type == RANDOM:
+            return f"랜덤 선택 ({len(self.children)}개 중 하나)"
+        if self.type == OPTION:
+            return "선택지"
+        if self.type == WINDOW:
+            return _describe_window(p)
         return self.type
 
 
@@ -181,6 +204,14 @@ def _describe_jump(p: dict[str, Any]) -> str:
         "restart": "매크로 처음으로 돌아가기",
         "stop": "매크로 종료",
     }.get(action, action)
+
+
+def _describe_window(p: dict[str, Any]) -> str:
+    target = p.get("title") or p.get("process") or "(지정 안 됨)"
+    action = str(p.get("action", "activate"))
+    if action == "wait":
+        return f"창이 나타날 때까지 대기: {target}"
+    return f"창 활성화: {target}"
 
 
 @dataclass
@@ -288,3 +319,35 @@ def label_step(name: str) -> Step:
 
 def jump_step(action: str, target: str = "") -> Step:
     return Step(type=JUMP, params={"action": action, "target": target})
+
+
+def option_step() -> Step:
+    return Step(type=OPTION)
+
+
+def random_step(count: int = 2) -> Step:
+    """A block that runs exactly one of its options, picked at random."""
+    count = max(2, count)
+    step = Step(type=RANDOM, params={"count": count})
+    step.children = [option_step() for _ in range(count)]
+    return step
+
+
+def sync_random_options(step: Step) -> None:
+    """Make the option list match the count the editor asked for."""
+    wanted = max(2, int(step.params.get("count", len(step.children)) or 2))
+    while len(step.children) < wanted:
+        step.children.append(option_step())
+    del step.children[wanted:]
+    step.params["count"] = wanted
+
+
+def window_step(action: str = "activate", **params: Any) -> Step:
+    base = {
+        "action": action,     # activate | wait
+        "title": "",          # substring of the window title
+        "process": "",        # substring of the executable name
+        "timeout_ms": 5000,
+    }
+    base.update(params)
+    return Step(type=WINDOW, params=base)
