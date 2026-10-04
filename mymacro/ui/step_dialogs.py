@@ -351,6 +351,17 @@ class MouseStepDialog(_BaseStepDialog):
         self.duration.setToolTip("0이면 즉시 이동합니다. 값을 주면 그 시간 동안 천천히 움직입니다.")
         self.form.addRow("이동 시간", self.duration)
 
+        self.jitter = QSpinBox()
+        self.jitter.setRange(0, 500)
+        self.jitter.setSuffix(" px")
+        self.jitter.setValue(int(p.get("jitter_px", 0) or 0))
+        self.jitter.setToolTip(
+            "매번 같은 픽셀을 누르지 않고 이 범위 안에서 조금씩 다른 곳을 누릅니다.\n"
+            "0이면 항상 정확히 같은 지점입니다.\n"
+            "드래그는 시작점과 도착점 모두에 적용됩니다."
+        )
+        self.form.addRow("좌표 오차 범위", self.jitter)
+
         self.action.currentIndexChanged.connect(self._sync_visibility)
         self.use_current.toggled.connect(self._sync_visibility)
         self._sync_visibility()
@@ -394,6 +405,7 @@ class MouseStepDialog(_BaseStepDialog):
         if action == "scroll":
             params["scroll_amount"] = self.scroll_amount.value()
         params["duration_ms"] = self.duration.value()
+        params["jitter_px"] = self.jitter.value()
         return params
 
 

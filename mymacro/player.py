@@ -34,6 +34,20 @@ LogFn = Callable[[str], None]
 CLICK_EDGE_INSET_PX = 1
 
 
+def jitter_point(x, y, jitter_px: int = 0) -> tuple:
+    """Scatter a coordinate inside a square of `jitter_px`.
+
+    A missing coordinate means "wherever the pointer already is", so there is
+    nothing to scatter.
+    """
+    if x is None or y is None or jitter_px <= 0:
+        return x, y
+    return (
+        int(x) + random.randint(-jitter_px, jitter_px),
+        int(y) + random.randint(-jitter_px, jitter_px),
+    )
+
+
 def click_point(match, offset: Sequence[int], jitter_px: int = 0) -> tuple[int, int]:
     """Where to click for a match: its centre, shifted and optionally scattered.
 
@@ -47,8 +61,7 @@ def click_point(match, offset: Sequence[int], jitter_px: int = 0) -> tuple[int, 
     if jitter_px <= 0:
         return base_x, base_y
 
-    x = base_x + random.randint(-jitter_px, jitter_px)
-    y = base_y + random.randint(-jitter_px, jitter_px)
+    x, y = jitter_point(base_x, base_y, jitter_px)
 
     aimed_inside = (
         match.left <= base_x < match.left + match.width
@@ -205,9 +218,12 @@ class Player:
     def _do_mouse(self, p: dict) -> None:
         self._progress += 1
         action = str(p.get("action", "click"))
-        x, y = p.get("x"), p.get("y")
         duration = float(p.get("duration_ms", 0) or 0)
         button = str(p.get("button", "left"))
+
+        jitter = int(p.get("jitter_px", 0) or 0)
+        x, y = jitter_point(p.get("x"), p.get("y"), jitter)
+        to_x, to_y = jitter_point(p.get("to_x"), p.get("to_y"), jitter)
 
         if action == "move":
             ib.move_to(x, y, duration)
@@ -224,7 +240,7 @@ class Player:
         elif action == "mouse_up":
             ib.mouse_up(x, y, button)
         elif action == "drag":
-            ib.drag(x, y, p.get("to_x"), p.get("to_y"), button, duration)
+            ib.drag(x, y, to_x, to_y, button, duration)
         elif action == "scroll":
             ib.scroll(int(p.get("scroll_amount", 0)), x, y)
         else:

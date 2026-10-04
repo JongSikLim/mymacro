@@ -129,3 +129,72 @@ def test_jitter_survives_a_save(tmp_path):
     path = tmp_path / "m.json"
     macro.save(path)
     assert Macro.load(path).steps[0].params["click_jitter_px"] == 7
+
+
+# --- fixed coordinates, the same idea ------------------------------------
+
+from mymacro.models import mouse_step  # noqa: E402
+from mymacro.player import jitter_point  # noqa: E402
+
+
+def test_jitter_point_leaves_an_unset_coordinate_alone():
+    """No coordinate means "use the current pointer position"."""
+    assert jitter_point(None, None, 10) == (None, None)
+    assert jitter_point(None, 5, 10) == (None, 5)
+    assert jitter_point(100, 200, 0) == (100, 200)
+
+
+def test_jitter_point_stays_in_range_and_moves_around():
+    points = {jitter_point(1000, 500, 7) for _ in range(400)}
+
+    assert len(points) > 20
+    for x, y in points:
+        assert abs(x - 1000) <= 7 and abs(y - 500) <= 7
+
+
+def test_mouse_click_can_be_scattered(backend, monkeypatch):
+    macro = Macro(repeat=40)
+    macro.steps = [mouse_step("click", x=800, y=600, jitter_px=5)]
+    player_mod.Player(macro, threading.Event(), lambda _m: None, failsafe=False).run()
+
+    points = {(call[1], call[2]) for call in backend.calls}
+    assert len(points) > 5
+    for x, y in points:
+        assert abs(x - 800) <= 5 and abs(y - 600) <= 5
+
+
+def test_mouse_click_without_jitter_is_exact(backend):
+    macro = Macro(repeat=5)
+    macro.steps = [mouse_step("click", x=800, y=600)]
+    player_mod.Player(macro, threading.Event(), lambda _m: None, failsafe=False).run()
+
+    assert backend.calls == [("click", 800, 600, "left", 1)] * 5
+
+
+def test_drag_scatters_both_ends(backend, monkeypatch):
+    macro = Macro(repeat=30)
+    macro.steps = [mouse_step("drag", x=100, y=100, to_x=400, to_y=400, jitter_px=6)]
+    player_mod.Player(macro, threading.Event(), lambda _m: None, failsafe=False).run()
+
+    starts = {(c[1], c[2]) for c in backend.calls if c[0] == "drag"}
+    ends = {(c[3], c[4]) for c in backend.calls if c[0] == "drag"}
+    assert len(starts) > 3 and len(ends) > 3
+    for x, y in starts:
+        assert abs(x - 100) <= 6 and abs(y - 100) <= 6
+    for x, y in ends:
+        assert abs(x - 400) <= 6 and abs(y - 400) <= 6
+
+
+def test_a_step_using_the_current_position_is_never_scattered(backend):
+    macro = Macro(repeat=3)
+    macro.steps = [mouse_step("click", x=None, y=None, jitter_px=20)]
+    player_mod.Player(macro, threading.Event(), lambda _m: None, failsafe=False).run()
+
+    assert backend.calls == [("click", None, None, "left", 1)] * 3
+
+
+def test_mouse_jitter_shows_up_in_the_step_description():
+    assert "±4px" in mouse_step("click", x=1, y=2, jitter_px=4).describe()
+    assert "±" not in mouse_step("click", x=1, y=2).describe()
+    # nothing to scatter when there is no coordinate
+    assert "±" not in mouse_step("click", x=None, y=None, jitter_px=4).describe()

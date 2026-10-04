@@ -129,7 +129,9 @@ class Step:
 def _describe_mouse(p: dict[str, Any]) -> str:
     action = str(p.get("action", "click"))
     x, y = p.get("x"), p.get("y")
-    pos = f"({x}, {y})" if x is not None and y is not None else "(현재 위치)"
+    jitter = int(p.get("jitter_px", 0) or 0)
+    spread = f" ±{jitter}px" if jitter and x is not None else ""
+    pos = f"({x}, {y}){spread}" if x is not None and y is not None else "(현재 위치)"
     labels = {
         "move": "이동", "click": "좌클릭", "double_click": "더블클릭",
         "right_click": "우클릭", "middle_click": "휠클릭",

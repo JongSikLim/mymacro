@@ -99,7 +99,7 @@ def test_every_dialog_builds_and_returns_params(window, step_type):
 
 
 EXISTING_STEPS = {
-    models.MOUSE: mouse_step("drag", x=1, y=2, to_x=3, to_y=4, button="left"),
+    models.MOUSE: mouse_step("drag", x=1, y=2, to_x=3, to_y=4, button="left", jitter_px=3),
     models.KEY: key_step("hotkey", keys=["ctrl", "s"]),
     models.DELAY: delay_step(500, 50),
     models.IF_IMAGE: if_image_step(
@@ -124,6 +124,8 @@ def test_every_dialog_round_trips_an_existing_step(window, step_type):
             assert params["name"] == "시작"
         if step_type == models.JUMP:
             assert params["action"] == "goto" and params["target"] == "시작"
+        if step_type == models.MOUSE:
+            assert params["jitter_px"] == 3
         if step_type == models.LOOP:
             assert params["mode"] == "while_image"
         if step_type == models.IF_IMAGE:
