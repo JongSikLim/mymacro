@@ -112,7 +112,8 @@ class Step:
             if timeout:
                 notes.append(f"최대 {timeout}ms 대기")
             if p.get("click_on_match"):
-                notes.append("찾으면 클릭")
+                jitter = int(p.get("click_jitter_px", 0) or 0)
+                notes.append(f"찾으면 클릭 (±{jitter}px)" if jitter else "찾으면 클릭")
             if p.get("key_on_match"):
                 notes.append(f"찾으면 {p['key_on_match']} 입력")
             return f"이미지 조건: {name} ({', '.join(notes)})"
@@ -248,6 +249,9 @@ def if_image_step(image: str, **params: Any) -> Step:
         "grayscale": True,
         "click_on_match": False,
         "match_offset": [0, 0],
+        # Scatter the click a little instead of hitting the same pixel every
+        # time. 0 means the exact point.
+        "click_jitter_px": 0,
         # A key sent after the optional click. "enter", "ctrl+v", "" for none.
         # The 찾았을 때 branch still handles anything longer than one key.
         "key_on_match": "",

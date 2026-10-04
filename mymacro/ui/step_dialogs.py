@@ -232,6 +232,20 @@ class TemplatePicker(QWidget):
             )
 
 
+def _click_jitter_field(initial: int = 0) -> QSpinBox:
+    """How far a click may wander from the exact point."""
+    spin = QSpinBox()
+    spin.setRange(0, 500)
+    spin.setSuffix(" px")
+    spin.setValue(initial)
+    spin.setToolTip(
+        "매번 같은 픽셀을 누르지 않고 이 범위 안에서 조금씩 다른 곳을 누릅니다.\n"
+        "0이면 항상 정확히 같은 지점입니다.\n"
+        "찾은 이미지 안을 겨냥한 경우에는 이미지 밖으로 나가지 않습니다."
+    )
+    return spin
+
+
 def _key_on_match_field(initial: str = "") -> QComboBox:
     """Editable dropdown: pick a common key or type a combo like ctrl+v."""
     box = QComboBox()
@@ -515,6 +529,9 @@ class ImageConditionDialog(_BaseStepDialog):
         offset_holder.setToolTip("찾은 이미지 중앙에서 이만큼 떨어진 곳을 클릭합니다.")
         self.form.addRow("클릭 보정", offset_holder)
 
+        self.click_jitter = _click_jitter_field(int(p.get("click_jitter_px", 0) or 0))
+        self.form.addRow("클릭 오차 범위", self.click_jitter)
+
         self.key_on_match = _key_on_match_field(str(p.get("key_on_match", "")))
         self.form.addRow("찾으면 키 입력", self.key_on_match)
 
@@ -526,6 +543,7 @@ class ImageConditionDialog(_BaseStepDialog):
                 "click_on_match": self.click_on_match.isChecked(),
                 "match_offset": [self.offset_x.value(), self.offset_y.value()],
                 "key_on_match": self.key_on_match.currentText().strip().lower(),
+                "click_jitter_px": self.click_jitter.value(),
             }
         )
         return params
@@ -651,6 +669,9 @@ class ImageWatchDialog(_BaseStepDialog):
         offset_holder.setToolTip("찾은 이미지 중앙에서 이만큼 떨어진 곳을 클릭합니다.")
         self.form.addRow("클릭 보정", offset_holder)
 
+        self.click_jitter = _click_jitter_field()
+        self.form.addRow("클릭 오차 범위", self.click_jitter)
+
         self.key_on_match = _key_on_match_field()
         self.form.addRow("보이면 키 입력", self.key_on_match)
 
@@ -682,6 +703,7 @@ class ImageWatchDialog(_BaseStepDialog):
             click_on_match=self.click_on_match.isChecked(),
             match_offset=[self.offset_x.value(), self.offset_y.value()],
             key_on_match=self.key_on_match.currentText().strip().lower(),
+            click_jitter_px=self.click_jitter.value(),
         )
         if self.after_match.currentData() == "stop":
             condition.then_steps = [models.jump_step("break")]

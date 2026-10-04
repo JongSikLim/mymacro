@@ -102,7 +102,9 @@ EXISTING_STEPS = {
     models.MOUSE: mouse_step("drag", x=1, y=2, to_x=3, to_y=4, button="left"),
     models.KEY: key_step("hotkey", keys=["ctrl", "s"]),
     models.DELAY: delay_step(500, 50),
-    models.IF_IMAGE: if_image_step("a.png", timeout_ms=1000, key_on_match="ctrl+v"),
+    models.IF_IMAGE: if_image_step(
+        "a.png", timeout_ms=1000, key_on_match="ctrl+v", click_jitter_px=4
+    ),
     models.LOOP: loop_step("while_image", image="b.png"),
     models.LABEL: label_step("시작"),
     models.JUMP: jump_step("goto", "시작"),
@@ -126,6 +128,7 @@ def test_every_dialog_round_trips_an_existing_step(window, step_type):
             assert params["mode"] == "while_image"
         if step_type == models.IF_IMAGE:
             assert params["key_on_match"] == "ctrl+v"
+            assert params["click_jitter_px"] == 4
     finally:
         dialog.deleteLater()
 
@@ -289,3 +292,18 @@ def test_image_watch_can_send_a_key(window, stub_overlay):
 
     assert condition.params["key_on_match"] == "enter"
     assert "찾으면 enter 입력" in condition.describe()
+
+
+def test_image_watch_passes_the_click_jitter_through(window, stub_overlay):
+    from mymacro.ui.step_dialogs import ImageWatchDialog
+
+    dialog = ImageWatchDialog(window, images_dir=stub_overlay)
+    dialog.template.image_path.setText("popup.png")
+    dialog.click_jitter.setValue(6)
+    try:
+        condition = dialog.to_steps()[0].children[0]
+    finally:
+        dialog.deleteLater()
+
+    assert condition.params["click_jitter_px"] == 6
+    assert "±6px" in condition.describe()

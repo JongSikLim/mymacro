@@ -17,7 +17,7 @@ from __future__ import annotations
 import random
 import threading
 import time
-from typing import Callable, Iterable
+from typing import Callable, Iterable, Sequence
 
 from . import input_backend as ib
 from . import models, vision
@@ -28,6 +28,37 @@ from .models import Macro, Step
 FAILSAFE_CORNER_PX = 3
 
 LogFn = Callable[[str], None]
+
+# Never let a scattered click land on the outermost pixel of the match; a
+# border pixel is often outside the clickable area of the real control.
+CLICK_EDGE_INSET_PX = 1
+
+
+def click_point(match, offset: Sequence[int], jitter_px: int = 0) -> tuple[int, int]:
+    """Where to click for a match: its centre, shifted and optionally scattered.
+
+    `jitter_px` spreads the click over a square of that radius so the same
+    pixel is not hit every single time. When the aim is the matched image
+    itself, the result is kept inside it - a scattered click that lands next
+    to the button would simply do nothing.
+    """
+    base_x = match.x + int(offset[0])
+    base_y = match.y + int(offset[1])
+    if jitter_px <= 0:
+        return base_x, base_y
+
+    x = base_x + random.randint(-jitter_px, jitter_px)
+    y = base_y + random.randint(-jitter_px, jitter_px)
+
+    aimed_inside = (
+        match.left <= base_x < match.left + match.width
+        and match.top <= base_y < match.top + match.height
+    )
+    if aimed_inside:
+        inset = CLICK_EDGE_INSET_PX
+        x = min(max(x, match.left + inset), match.left + match.width - 1 - inset)
+        y = min(max(y, match.top + inset), match.top + match.height - 1 - inset)
+    return x, y
 
 
 class MacroAborted(Exception):
@@ -292,8 +323,13 @@ class Player:
             how = "캐시" if match.from_hot_spot else "전체 탐색"
             self.log(f"    찾음 ({match.x}, {match.y}) 점수 {match.score:.3f} [{how}]")
             if p.get("click_on_match"):
-                dx, dy = (p.get("match_offset") or [0, 0])[:2]
-                ib.click(match.x + int(dx), match.y + int(dy))
+                x, y = click_point(
+                    match,
+                    (p.get("match_offset") or [0, 0])[:2],
+                    int(p.get("click_jitter_px", 0) or 0),
+                )
+                self.log(f"    클릭 ({x}, {y})")
+                ib.click(x, y)
             key_on_match = str(p.get("key_on_match", "") or "")
             if key_on_match:
                 self.log(f"    {key_on_match} 입력")
