@@ -232,6 +232,21 @@ class TemplatePicker(QWidget):
             )
 
 
+def _key_on_match_field(initial: str = "") -> QComboBox:
+    """Editable dropdown: pick a common key or type a combo like ctrl+v."""
+    box = QComboBox()
+    box.setEditable(True)
+    box.addItem("")  # none
+    box.addItems(keymap.COMMON_KEYS)
+    box.setCurrentText(initial)
+    box.setToolTip(
+        "이미지를 찾으면 이 키를 누릅니다. 비워두면 아무 키도 누르지 않습니다.\n"
+        "조합키는 ctrl+v 처럼 + 로 이어 쓰세요.\n"
+        "여러 단계가 필요하면 '찾았을 때' 가지에 단계를 추가하세요."
+    )
+    return box
+
+
 class _BaseStepDialog(QDialog):
     def __init__(self, parent: QWidget | None, title: str) -> None:
         super().__init__(parent)
@@ -500,6 +515,9 @@ class ImageConditionDialog(_BaseStepDialog):
         offset_holder.setToolTip("찾은 이미지 중앙에서 이만큼 떨어진 곳을 클릭합니다.")
         self.form.addRow("클릭 보정", offset_holder)
 
+        self.key_on_match = _key_on_match_field(str(p.get("key_on_match", "")))
+        self.form.addRow("찾으면 키 입력", self.key_on_match)
+
     def to_params(self) -> dict[str, Any]:
         params = self.template.to_params()
         params.update(
@@ -507,6 +525,7 @@ class ImageConditionDialog(_BaseStepDialog):
                 "timeout_ms": self.timeout.value(),
                 "click_on_match": self.click_on_match.isChecked(),
                 "match_offset": [self.offset_x.value(), self.offset_y.value()],
+                "key_on_match": self.key_on_match.currentText().strip().lower(),
             }
         )
         return params
@@ -632,6 +651,9 @@ class ImageWatchDialog(_BaseStepDialog):
         offset_holder.setToolTip("찾은 이미지 중앙에서 이만큼 떨어진 곳을 클릭합니다.")
         self.form.addRow("클릭 보정", offset_holder)
 
+        self.key_on_match = _key_on_match_field()
+        self.form.addRow("보이면 키 입력", self.key_on_match)
+
         self.after_match = QComboBox()
         self.after_match.addItem("계속 감시한다", "continue")
         self.after_match.addItem("감시를 끝낸다", "stop")
@@ -659,6 +681,7 @@ class ImageWatchDialog(_BaseStepDialog):
             timeout_ms=0,          # one look per turn; the delay sets the pace
             click_on_match=self.click_on_match.isChecked(),
             match_offset=[self.offset_x.value(), self.offset_y.value()],
+            key_on_match=self.key_on_match.currentText().strip().lower(),
         )
         if self.after_match.currentData() == "stop":
             condition.then_steps = [models.jump_step("break")]

@@ -102,7 +102,7 @@ EXISTING_STEPS = {
     models.MOUSE: mouse_step("drag", x=1, y=2, to_x=3, to_y=4, button="left"),
     models.KEY: key_step("hotkey", keys=["ctrl", "s"]),
     models.DELAY: delay_step(500, 50),
-    models.IF_IMAGE: if_image_step("a.png", timeout_ms=1000),
+    models.IF_IMAGE: if_image_step("a.png", timeout_ms=1000, key_on_match="ctrl+v"),
     models.LOOP: loop_step("while_image", image="b.png"),
     models.LABEL: label_step("시작"),
     models.JUMP: jump_step("goto", "시작"),
@@ -124,6 +124,8 @@ def test_every_dialog_round_trips_an_existing_step(window, step_type):
             assert params["action"] == "goto" and params["target"] == "시작"
         if step_type == models.LOOP:
             assert params["mode"] == "while_image"
+        if step_type == models.IF_IMAGE:
+            assert params["key_on_match"] == "ctrl+v"
     finally:
         dialog.deleteLater()
 
@@ -272,3 +274,18 @@ def test_image_watch_block_actually_clicks_when_the_image_appears(window, stub_o
 
     clicks = [c for c in backend.calls if c[0] == "click"]
     assert clicks == [("click", hit.x, hit.y, "left", 1)], "clicks once, on the match"
+
+
+def test_image_watch_can_send_a_key(window, stub_overlay):
+    from mymacro.ui.step_dialogs import ImageWatchDialog
+
+    dialog = ImageWatchDialog(window, images_dir=stub_overlay)
+    dialog.template.image_path.setText("popup.png")
+    dialog.key_on_match.setCurrentText("enter")
+    try:
+        condition = dialog.to_steps()[0].children[0]
+    finally:
+        dialog.deleteLater()
+
+    assert condition.params["key_on_match"] == "enter"
+    assert "찾으면 enter 입력" in condition.describe()

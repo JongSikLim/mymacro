@@ -58,6 +58,16 @@ class FakeBackend:
     def hotkey(self, names):
         self.calls.append(("hotkey", list(names)))
 
+    def press_combo(self, spec):
+        # Mirrors the real parser so tests see what the OS would be asked for.
+        keys = [part.strip().lower() for part in (spec or "").split("+") if part.strip()]
+        if not keys:
+            return
+        if len(keys) == 1:
+            self.press(keys[0])
+        else:
+            self.hotkey(keys)
+
     def type_text(self, text, interval_ms=0):
         self.calls.append(("type_text", text))
 
@@ -204,3 +214,32 @@ def test_stop_event_breaks_infinite_macro(backend):
 
     assert backend.calls
     assert stop.is_set()
+
+
+def test_the_fake_backend_covers_everything_the_player_calls():
+    """Guard against the fake drifting behind the real backend.
+
+    A missing method here shows up as an AttributeError deep inside a playback
+    test, which is a confusing way to learn that the fake is out of date.
+    """
+    import ast
+    import inspect
+
+    from mymacro import input_backend
+
+    source = inspect.getsource(player_mod)
+    used = {
+        node.func.attr
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "ib"
+    }
+    assert used, "no input_backend calls found - did the alias change?"
+
+    real = {name for name in used if hasattr(input_backend, name)}
+    assert real == used, f"player calls something input_backend lacks: {used - real}"
+
+    missing = {name for name in used if not hasattr(FakeBackend, name)}
+    assert not missing, f"FakeBackend is missing: {sorted(missing)}"

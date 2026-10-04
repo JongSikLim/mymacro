@@ -294,6 +294,10 @@ class Player:
             if p.get("click_on_match"):
                 dx, dy = (p.get("match_offset") or [0, 0])[:2]
                 ib.click(match.x + int(dx), match.y + int(dy))
+            key_on_match = str(p.get("key_on_match", "") or "")
+            if key_on_match:
+                self.log(f"    {key_on_match} 입력")
+                ib.press_combo(key_on_match)
             self._run_steps(step.then_steps)
         else:
             self.log("    못 찾음")

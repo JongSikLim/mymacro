@@ -221,6 +221,17 @@ def hotkey(names: Iterable[str]) -> None:
             _keyboard_ctl().release(key)
 
 
+def press_combo(spec: str) -> None:
+    """Press a key written as plain text: "enter", or "ctrl+shift+s"."""
+    keys = [part.strip().lower() for part in (spec or "").split("+") if part.strip()]
+    if not keys:
+        return
+    if len(keys) == 1:
+        press(keys[0])
+    else:
+        hotkey(keys)
+
+
 def type_text(text: str, interval_ms: float = 0) -> None:
     """Type text. pynput routes anything outside the keyboard layout through
     KEYEVENTF_UNICODE, so Korean and most symbols go in directly."""

@@ -113,6 +113,8 @@ class Step:
                 notes.append(f"최대 {timeout}ms 대기")
             if p.get("click_on_match"):
                 notes.append("찾으면 클릭")
+            if p.get("key_on_match"):
+                notes.append(f"찾으면 {p['key_on_match']} 입력")
             return f"이미지 조건: {name} ({', '.join(notes)})"
         if self.type == LOOP:
             return _describe_loop(p)
@@ -246,6 +248,9 @@ def if_image_step(image: str, **params: Any) -> Step:
         "grayscale": True,
         "click_on_match": False,
         "match_offset": [0, 0],
+        # A key sent after the optional click. "enter", "ctrl+v", "" for none.
+        # The 찾았을 때 branch still handles anything longer than one key.
+        "key_on_match": "",
         # Look near the last hit first. Falls back to a full search on a miss,
         # so this only changes speed, never the outcome.
         "use_cache": True,
