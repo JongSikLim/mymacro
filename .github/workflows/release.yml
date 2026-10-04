@@ -1,0 +1,122 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build and release"
+        required: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest tests -q
+
+      - name: Build MyMacro.exe
+        run: >
+          pyinstaller --noconfirm --clean --onefile --windowed
+          --name MyMacro
+          --hidden-import pynput.keyboard._win32
+          --hidden-import pynput.mouse._win32
+          run.py
+
+      - name: Build the input check tool
+        run: >
+          pyinstaller --noconfirm --clean --onefile --console
+          --name MyMacroInputCheck
+          --paths .
+          --hidden-import pynput.keyboard._win32
+          --hidden-import pynput.mouse._win32
+          tools/check_input.py
+
+      - name: Assemble the package
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME:-${{ github.event.inputs.tag }}}"
+          OUT="MyMacro-${TAG}-windows-x64"
+          mkdir -p "dist/${OUT}/macros/images"
+          cp dist/MyMacro.exe "dist/${OUT}/"
+          cp dist/MyMacroInputCheck.exe "dist/${OUT}/"
+          cp README.md "dist/${OUT}/"
+          cp LICENSE "dist/${OUT}/"
+          touch "dist/${OUT}/macros/images/.gitkeep"
+          cd dist && 7z a -tzip "${OUT}.zip" "${OUT}" >/dev/null
+          echo "ASSET=dist/${OUT}.zip" >> "$GITHUB_ENV"
+          echo "TAG=${TAG}" >> "$GITHUB_ENV"
+
+      - name: Write the release notes
+        shell: bash
+        run: |
+          cat > notes.md <<'NOTES'
+          Windows용 간단한 매크로 도구입니다.
+
+          ## 설치
+
+          1. 아래 zip을 받아서 원하는 폴더에 풉니다. 설치 프로그램은 없습니다.
+          2. `MyMacro.exe` 를 실행합니다.
+          3. 매크로와 캡처한 이미지는 exe 옆의 `macros\` 폴더에 쌓입니다. 폴더째 옮기면 그대로 따라갑니다.
+
+          Windows 10 / 11 64비트에서 동작합니다. Python 설치는 필요 없습니다.
+
+          처음 실행할 때 SmartScreen 경고가 뜹니다. 코드 서명 인증서가 없어서 그렇습니다.
+          `추가 정보` → `실행`을 누르면 됩니다.
+
+          ## 단축키
+
+          | 키 | 동작 |
+          |----|------|
+          | F8 | 녹화 시작 / 중지 |
+          | F9 | 실행 |
+          | F10 | 중지 |
+          | 마우스를 화면 왼쪽 위 모서리로 | 비상 정지 |
+
+          ## 기능
+
+          - 마우스 / 키보드 입력. 녹화하거나 직접 추가합니다. 좌표는 F2로 화면에서 찍습니다
+          - 딜레이. 무작위 폭을 줄 수 있습니다
+          - 이미지 인식 조건부 입력. 화면에서 그림을 찾아 분기하거나 그 위치를 클릭합니다
+          - 반복 블록, 라벨, 흐름 제어 (루프 탈출 / 처음으로 / 라벨로 이동 / 종료)
+
+          ## 입력이 안 들어갈 때
+
+          같이 들어 있는 `MyMacroInputCheck.exe` 를 실행하세요. 빈 메모장을 띄워놓고 돌리면
+          입력이 다른 프로그램에 실제로 전달되는지 자동으로 확인하고 원인을 좁혀줍니다.
+
+          가장 흔한 원인은 **대상 프로그램이 관리자 권한으로 실행 중**인 경우입니다.
+          그때는 `MyMacro.exe` 도 우클릭 → 관리자 권한으로 실행하세요.
+
+          ## 알려진 제한
+
+          - 이미지 인식은 픽셀 단위 템플릿 매칭입니다. 창 크기나 화면 배율이 바뀌면 다시 캡처해야 합니다
+          - DirectInput을 쓰는 일부 게임은 주입된 입력을 무시합니다
+          NOTES
+
+      - name: Create the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" "$ASSET" \
+            --title "MyMacro $TAG" \
+            --notes-file notes.md
